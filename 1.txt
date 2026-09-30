@@ -1,0 +1,248 @@
+ВАРИАНТ 1
+
+1. Число работников с зарплатой более 10000 в отделах, где всего работников более одного.
+Сначала подзапросом отбираем отделы с числом людей > 1, а затем считаем тех, у кого оклад выше 10000.
+
+SELECT 
+    d.department_id, 
+    d.department_name, 
+    COUNT(e.employee_id) AS employees_count
+FROM departments d
+JOIN employees e ON d.department_id = e.department_id
+WHERE e.salary > 10000
+  AND d.department_id IN (
+      SELECT department_id 
+      FROM employees 
+      GROUP BY department_id 
+      HAVING COUNT(*) > 1
+  )
+GROUP BY d.department_id, d.department_name
+ORDER BY d.department_id;
+
+2. Для каждой (!) страны посчитать суммарную зарплату менеджеров.
+Чтобы сохранить страны без менеджеров, берем LEFT JOIN, а фильтр менеджера ставим в блок ON.
+
+SELECT 
+    c.country_id, 
+    c.country_name, 
+    COALESCE(SUM(m.salary), 0) AS total_salary
+FROM countries c
+LEFT JOIN locations l ON c.country_id = l.country_id
+LEFT JOIN departments d ON l.location_id = d.location_id
+LEFT JOIN employees m ON d.department_id = m.department_id 
+                     AND m.employee_id IN (SELECT manager_id FROM employees)
+GROUP BY c.country_id, c.country_name
+ORDER BY c.country_id;
+
+3. Из страны с наибольшим числом отделов выбрать менеджера с максимальным окладом.
+
+SELECT m.employee_id, m.salary
+FROM employees m
+JOIN departments d ON m.department_id = d.department_id
+JOIN locations l ON d.location_id = l.location_id
+WHERE m.employee_id IN (SELECT manager_id FROM employees)
+  AND l.country_id IN (
+      SELECT l2.country_id
+      FROM departments d2
+      JOIN locations l2 ON d2.location_id = l2.location_id
+      GROUP BY l2.country_id
+      ORDER BY COUNT(*) DESC
+      LIMIT 1
+  )
+ORDER BY m.salary DESC
+LIMIT 1;
+
+
+ВАРИАНТ 2
+
+1. Все должности, не встречающиеся в США.
+
+SELECT job_id, job_title
+FROM jobs
+WHERE job_id NOT IN (
+    SELECT e.job_id
+    FROM employees e
+    JOIN departments d ON e.department_id = d.department_id
+    JOIN locations l ON d.location_id = l.location_id
+    WHERE l.country_id = 'US'
+)
+ORDER BY job_title;
+
+2. Страны с сотрудниками, где число работников меньше среднего числа по всем таким странам.
+
+SELECT c.country_id, c.country_name, COUNT(e.employee_id) AS emp_count
+FROM countries c
+JOIN locations l ON c.country_id = l.country_id
+JOIN departments d ON l.location_id = d.location_id
+JOIN employees e ON d.department_id = e.department_id
+GROUP BY c.country_id, c.country_name
+HAVING COUNT(e.employee_id) < (
+    SELECT AVG(sub.cnt)
+    FROM (
+        SELECT COUNT(e2.employee_id) AS cnt
+        FROM employees e2
+        JOIN departments d2 ON e2.department_id = d2.department_id
+        JOIN locations l2 ON d2.location_id = l2.location_id
+        GROUP BY l2.country_id
+    ) sub
+)
+ORDER BY c.country_id;
+
+3. Из страны проживания менеджера с наименьшим стажем выбрать сотрудника с наибольшим числом подчиненных.
+
+SELECT m.employee_id, COUNT(sub.employee_id) AS subordinates_count
+FROM employees m
+JOIN departments d ON m.department_id = d.department_id
+JOIN locations l ON d.location_id = l.location_id
+JOIN employees sub ON sub.manager_id = m.employee_id
+WHERE l.country_id IN (
+    SELECT l2.country_id
+    FROM employees m2
+    JOIN departments d2 ON m2.department_id = d2.department_id
+    JOIN locations l2 ON d2.location_id = l2.location_id
+    WHERE m2.employee_id IN (SELECT manager_id FROM employees)
+    ORDER BY m2.hire_date DESC
+    LIMIT 1
+)
+GROUP BY m.employee_id
+ORDER BY subordinates_count DESC
+LIMIT 1;
+
+
+ВАРИАНТ 3
+
+1. Количество работников из региона «Americas» на каждой (!) должности.
+
+SELECT 
+    j.job_id, 
+    j.job_title, 
+    COUNT(e.employee_id) AS emp_count
+FROM jobs j
+LEFT JOIN (
+    SELECT e2.job_id, e2.employee_id
+    FROM employees e2
+    JOIN departments d ON e2.department_id = d.department_id
+    JOIN locations l ON d.location_id = l.location_id
+    JOIN countries c ON l.country_id = c.country_id
+    JOIN regions r ON c.region_id = r.region_id
+    WHERE r.region_name = 'Americas'
+) e ON j.job_id = e.job_id
+GROUP BY j.job_id, j.job_title
+ORDER BY emp_count DESC, j.job_title;
+
+2. Менеджер с подчиненным из Европы, имеющий наименьший стаж.
+
+SELECT m.employee_id, m.hire_date
+FROM employees m
+WHERE m.employee_id IN (
+    SELECT DISTINCT sub.manager_id
+    FROM employees sub
+    JOIN departments d ON sub.department_id = d.department_id
+    JOIN locations l ON d.location_id = l.location_id
+    JOIN countries c ON l.country_id = c.country_id
+    JOIN regions r ON c.region_id = r.region_id
+    WHERE r.region_name = 'Europe'
+)
+ORDER BY m.hire_date DESC
+LIMIT 1;
+
+3. Месяц, в котором трудоустроено больше всего менеджеров.
+
+SELECT EXTRACT(MONTH FROM hire_date) AS hire_month
+FROM employees
+WHERE employee_id IN (SELECT manager_id FROM employees)
+GROUP BY EXTRACT(MONTH FROM hire_date)
+ORDER BY COUNT(*) DESC
+LIMIT 1;
+
+
+ВАРИАНТ 4
+
+1. Менеджеры, которые ни разу не меняли должность.
+
+SELECT e.employee_id, e.last_name, j.job_title
+FROM employees e
+JOIN jobs j ON e.job_id = j.job_id
+WHERE e.employee_id IN (SELECT manager_id FROM employees)
+  AND e.employee_id NOT IN (SELECT employee_id FROM job_history)
+ORDER BY e.employee_id;
+
+2. Отделы, где все сотрудники имеют менеджеров из той же страны (без пустых отделов).
+
+SELECT d.department_id, d.department_name, c.country_name
+FROM departments d
+JOIN locations l ON d.location_id = l.location_id
+JOIN countries c ON l.country_id = c.country_id
+WHERE d.department_id IN (SELECT department_id FROM employees)
+  AND d.department_id NOT IN (
+      SELECT e.department_id
+      FROM employees e
+      JOIN employees m ON e.manager_id = m.employee_id
+      JOIN departments dm ON m.department_id = dm.department_id
+      JOIN locations lm ON dm.location_id = lm.location_id
+      JOIN departments de ON e.department_id = de.department_id
+      JOIN locations le ON de.location_id = le.location_id
+      WHERE lm.country_id <> le.country_id
+        AND e.department_id IS NOT NULL
+  )
+ORDER BY d.department_id;
+
+3. Год, в котором трудоустроено больше всего менеджеров.
+
+SELECT EXTRACT(YEAR FROM hire_date) AS hire_year
+FROM employees
+WHERE employee_id IN (SELECT manager_id FROM employees)
+GROUP BY EXTRACT(YEAR FROM hire_date)
+ORDER BY COUNT(*) DESC
+LIMIT 1;
+
+
+ВАРИАНТ 5
+
+1. Работники, менеджеры которых работают в другой стране.
+
+SELECT 
+    e.employee_id AS emp_id,
+    c_emp.country_name AS emp_country,
+    m.employee_id AS mgr_id,
+    c_mgr.country_name AS mgr_country
+FROM employees e
+JOIN employees m ON e.manager_id = m.employee_id
+JOIN departments d_emp ON e.department_id = d_emp.department_id
+JOIN locations l_emp ON d_emp.location_id = l_emp.location_id
+JOIN countries c_emp ON l_emp.country_id = c_emp.country_id
+JOIN departments d_mgr ON m.department_id = d_mgr.department_id
+JOIN locations l_mgr ON d_mgr.location_id = l_mgr.location_id
+JOIN countries c_mgr ON l_mgr.country_id = c_mgr.country_id
+WHERE c_emp.country_id <> c_mgr.country_id
+ORDER BY e.employee_id;
+
+2. Менеджеры из Америки, менявшие должность хотя бы раз.
+
+SELECT 
+    e.employee_id, 
+    COUNT(jh.job_id) AS changes_count
+FROM employees e
+JOIN departments d ON e.department_id = d.department_id
+JOIN locations l ON d.location_id = l.location_id
+JOIN countries c ON l.country_id = c.country_id
+JOIN regions r ON c.region_id = r.region_id
+JOIN job_history jh ON e.employee_id = jh.employee_id
+WHERE r.region_name = 'Americas'
+  AND e.employee_id IN (SELECT manager_id FROM employees)
+GROUP BY e.employee_id
+ORDER BY e.employee_id;
+
+3. Менеджер с максимальной разницей максимальных зарплат на новой и старой должностях.
+
+SELECT 
+    e.employee_id, 
+    d.department_name
+FROM employees e
+JOIN departments d ON e.department_id = d.department_id
+JOIN job_history jh ON e.employee_id = jh.employee_id
+JOIN jobs j_new ON e.job_id = j_new.job_id
+JOIN jobs j_old ON jh.job_id = j_old.job_id
+WHERE e.employee_id IN (SELECT manager_id FROM employees)
+ORDER BY (j_new.max_salary - j_old.max_salary) DESC
+LIMIT 1;
